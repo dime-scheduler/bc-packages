@@ -4,7 +4,7 @@ Distribution point for the [Dime.Scheduler Business Central connector](https://g
 
 | | |
 |---|---|
-| Feed URL | `https://dime-scheduler.github.io/bc-packages` |
+| Feed URL | `https://packages.dimescheduler.com` |
 | Package ids | `DimeSoftware.DimeScheduler.BC{major}.f15bbe6d-c2a3-4828-aa98-5a77cff4cd41` |
 | Versions | the connector's own app version, e.g. `3.1.0.0` |
 | Also on | [nuget.org](https://www.nuget.org/packages?q=DimeSoftware.DimeScheduler) (same packages) |
@@ -19,7 +19,7 @@ Add to `.vscode/settings.json` of the app that depends on the connector, then ru
 {
     "al.nugetFeeds": [
         "https://pkgs.dev.azure.com/dynamicssmb2/DynamicsBCPublicFeeds/_packaging/MSSymbolsV2",
-        "https://dime-scheduler.github.io/bc-packages"
+        "https://packages.dimescheduler.com"
     ],
     "al.useOnlyCustomFeeds": true
 }
@@ -34,7 +34,7 @@ The extension takes the first package whose id contains the app id, regardless o
 Both read the same feed and pick the major matching the target platform through each package's `Microsoft.Application` version range:
 
 ```powershell
-Download-BcNuGetPackageToFolder -nuGetServerUrl https://dime-scheduler.github.io/bc-packages/nuget/v3/index.json -packageName f15bbe6d-c2a3-4828-aa98-5a77cff4cd41 -folder .\apps
+Download-BcNuGetPackageToFolder -nuGetServerUrl https://packages.dimescheduler.com/nuget/v3/index.json -packageName f15bbe6d-c2a3-4828-aa98-5a77cff4cd41 -folder .\apps
 ```
 
 nuget.org works for these tools as well; the feed here is a second source.
