@@ -46,11 +46,11 @@ nuget.org works for these tools as well; the feed here is a second source.
 
 Releases can also be created by hand with the same tag format; the feed rebuilds on any release change. Nothing is committed to this repository per version.
 
-### Custom domain
+### Domain
 
-1. Add a DNS `CNAME` record for the chosen host pointing at `dime-scheduler.github.io`.
-2. Set the host under *Settings > Pages > Custom domain* and enforce HTTPS.
-3. Set the repository variable `FEED_BASE_URL` to `https://<host>` and re-run the Feed workflow, so the URLs inside the feed match.
+The site is served on `packages.dimescheduler.com`: a DNS `CNAME` to `dime-scheduler.github.io`, the host under *Settings > Pages > Custom domain* with HTTPS enforced, and the repository variable `FEED_BASE_URL` set to `https://packages.dimescheduler.com` so the URLs inside the feed match. Changing the host means updating all three and re-running the Feed workflow.
+
+The `github-pages` environment must allow deployments from `v*` tags as well as `master`, because release-triggered runs carry the tag as their ref.
 
 ## Why not just nuget.org
 
