@@ -20,6 +20,10 @@
     newest BC major first. BcContainerHelper and AL-Go read the same search file and pick the
     major that fits the target platform through each package's Microsoft.Application range.
 
+    For VS Code projects on an older major, the same feed is also written per BC major under
+    bc{major}/ (e.g. {base}/bc28), each listing only that major's package. A project points
+    al.nugetFeeds at the sub-feed matching its platform.
+
     Ids are lowercased because the extension lowercases them in the download URL. Versions are
     the release tags without the leading 'v' (four-part), so an app.json dependency version
     matches exactly. The site is rebuilt from scratch on every run.
@@ -42,10 +46,10 @@ $ProgressPreference = 'SilentlyContinue'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $BaseUrl = $BaseUrl.TrimEnd('/')
-$v3 = Join-Path $SiteRoot 'nuget/v3'
-$flat2 = Join-Path $v3 'flat2'
 if (Test-Path $SiteRoot) { Remove-Item $SiteRoot -Recurse -Force }
-New-Item -ItemType Directory -Path $flat2 -Force | Out-Null
+New-Item -ItemType Directory -Path $SiteRoot -Force | Out-Null
+# Release assets are staged here, then laid out once for the root feed and once per BC major.
+$staging = Join-Path ([System.IO.Path]::GetTempPath()) "bcfeed_$([guid]::NewGuid().ToString('N'))"
 
 function Read-NuspecId {
     param([string]$Path)
@@ -61,7 +65,7 @@ function Read-NuspecId {
 
 $releases = gh release list --repo $Repo --limit 200 --json tagName,isDraft,isPrerelease | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw 'gh release list failed.' }
-$download = Join-Path ([System.IO.Path]::GetTempPath()) "bcfeed_$([guid]::NewGuid().ToString('N'))"
+$download = Join-Path $staging '_releases'
 $packages = @{}
 try {
     foreach ($release in $releases | Where-Object { -not $_.isDraft }) {
@@ -75,7 +79,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $($release.tagName)." }
         foreach ($nupkg in Get-ChildItem $dir -Filter '*.nupkg') {
             $id = (Read-NuspecId $nupkg.FullName).ToLowerInvariant()
-            $target = Join-Path $flat2 "$id/$version"
+            $target = Join-Path $staging "$id/$version"
             New-Item -ItemType Directory -Path $target -Force | Out-Null
             Copy-Item $nupkg.FullName -Destination (Join-Path $target "$id.$version.nupkg")
             if (-not $packages.ContainsKey($id)) { $packages[$id] = @() }
@@ -91,29 +95,51 @@ if ($packages.Count -eq 0) { throw "No packages found in releases of $Repo." }
 
 # Newest BC major first; ids without a BC tag sort last.
 function Get-BcMajor { param([string]$Id) if ($Id -match '\.bc(\d+)\.') { [int]$Matches[1] } else { -1 } }
-$data = @(foreach ($id in $packages.Keys | Sort-Object { Get-BcMajor $_ } -Descending) {
-    $versions = @($packages[$id] | Sort-Object -Unique -Descending)
-    Set-Content -Path (Join-Path $flat2 "$id/index.json") -Encoding utf8NoBOM `
-        -Value ([ordered]@{ versions = @($versions | ForEach-Object { $_.ToString() }) } | ConvertTo-Json -Depth 5)
-    [ordered]@{
-        id       = $id
-        version  = $versions[0].ToString()
-        versions = @($versions | ForEach-Object {
-            [ordered]@{ version = $_.ToString(); '@id' = "$BaseUrl/nuget/v3/flat2/$id/$_/$id.$_.nupkg" }
-        })
+
+function Write-Feed {
+    param([string]$Root, [string]$Url, [hashtable]$Packages)
+    $v3 = Join-Path $Root 'nuget/v3'
+    $flat2 = Join-Path $v3 'flat2'
+    New-Item -ItemType Directory -Path $flat2 -Force | Out-Null
+    $data = @(foreach ($id in $Packages.Keys | Sort-Object { Get-BcMajor $_ } -Descending) {
+        $versions = @($Packages[$id] | Sort-Object -Unique -Descending)
+        foreach ($version in $versions) {
+            $target = Join-Path $flat2 "$id/$version"
+            New-Item -ItemType Directory -Path $target -Force | Out-Null
+            Copy-Item (Join-Path $staging "$id/$version/$id.$version.nupkg") -Destination (Join-Path $target "$id.$version.nupkg")
+        }
+        Set-Content -Path (Join-Path $flat2 "$id/index.json") -Encoding utf8NoBOM `
+            -Value ([ordered]@{ versions = @($versions | ForEach-Object { $_.ToString() }) } | ConvertTo-Json -Depth 5)
+        [ordered]@{
+            id       = $id
+            version  = $versions[0].ToString()
+            versions = @($versions | ForEach-Object {
+                [ordered]@{ version = $_.ToString(); '@id' = "$Url/nuget/v3/flat2/$id/$_/$id.$_.nupkg" }
+            })
+        }
+    })
+    $search = [ordered]@{ totalHits = $data.Count; data = $data }
+    $index = [ordered]@{
+        version   = '3.0.0'
+        resources = @(
+            [ordered]@{ '@id' = "$Url/nuget/v3/search.json"; '@type' = 'SearchQueryService' },
+            [ordered]@{ '@id' = "$Url/nuget/v3/search.json"; '@type' = 'SearchQueryService/3.0.0-beta' },
+            [ordered]@{ '@id' = "$Url/nuget/v3/flat2/"; '@type' = 'PackageBaseAddress/3.0.0' }
+        )
     }
-})
-$search = [ordered]@{ totalHits = $data.Count; data = $data }
-$index = [ordered]@{
-    version   = '3.0.0'
-    resources = @(
-        [ordered]@{ '@id' = "$BaseUrl/nuget/v3/search.json"; '@type' = 'SearchQueryService' },
-        [ordered]@{ '@id' = "$BaseUrl/nuget/v3/search.json"; '@type' = 'SearchQueryService/3.0.0-beta' },
-        [ordered]@{ '@id' = "$BaseUrl/nuget/v3/flat2/"; '@type' = 'PackageBaseAddress/3.0.0' }
-    )
+    Set-Content -Path (Join-Path $v3 'search.json') -Value ($search | ConvertTo-Json -Depth 10) -Encoding utf8NoBOM
+    Set-Content -Path (Join-Path $v3 'index.json') -Value ($index | ConvertTo-Json -Depth 10) -Encoding utf8NoBOM
+    $data
 }
-Set-Content -Path (Join-Path $v3 'search.json') -Value ($search | ConvertTo-Json -Depth 10) -Encoding utf8NoBOM
-Set-Content -Path (Join-Path $v3 'index.json') -Value ($index | ConvertTo-Json -Depth 10) -Encoding utf8NoBOM
+
+$majors = @($packages.Keys | ForEach-Object { Get-BcMajor $_ } | Where-Object { $_ -ge 0 } | Sort-Object -Unique -Descending)
+$data = Write-Feed -Root $SiteRoot -Url $BaseUrl -Packages $packages
+foreach ($major in $majors) {
+    $subset = @{}
+    foreach ($id in $packages.Keys | Where-Object { (Get-BcMajor $_) -eq $major }) { $subset[$id] = $packages[$id] }
+    Write-Feed -Root (Join-Path $SiteRoot "bc$major") -Url "$BaseUrl/bc$major" -Packages $subset | Out-Null
+}
+Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
 # Without this, GitHub Pages runs Jekyll over the site, which is pointless for plain files.
 Set-Content -Path (Join-Path $SiteRoot '.nojekyll') -Value '' -Encoding utf8NoBOM
 
@@ -121,6 +147,7 @@ $rows = @($data | ForEach-Object {
     $links = @($_.versions | ForEach-Object { "<a href=""$($_.'@id')"">$($_.version)</a>" }) -join ', '
     "<tr><td><code>$($_.id)</code></td><td>$links</td></tr>"
 }) -join "`n"
+$subFeeds = @($majors | ForEach-Object { "<li>BC$($_): <code>$BaseUrl/bc$_</code></li>" }) -join "`n"
 $html = @"
 <!doctype html>
 <meta charset="utf-8">
@@ -128,12 +155,15 @@ $html = @"
 <style>body{font-family:system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem}td{padding:.25rem .75rem;vertical-align:top}</style>
 <h1>Dime.Scheduler Business Central packages</h1>
 <p>NuGet feed for the <a href="https://github.com/dime-scheduler/bc-connector">Dime.Scheduler connector</a>, one package per
-Business Central major. Feed URL: <code>$BaseUrl</code>. The AL VS Code extension always takes the first package listed, the newest major;
-BcContainerHelper and AL-Go pick the major matching the target platform.</p>
+Business Central major. Feed URL: <code>$BaseUrl</code>. BcContainerHelper and AL-Go pick the major matching the target platform.
+The AL VS Code extension always takes the first package listed, the newest major; for another major use its sub-feed:</p>
+<ul>
+$subFeeds
+</ul>
 <table>
 <tr><th>Package</th><th>Versions</th></tr>
 $rows
 </table>
 "@
 Set-Content -Path (Join-Path $SiteRoot 'index.html') -Value $html -Encoding utf8NoBOM
-Write-Host "Feed written to $SiteRoot ($($data.Count) package id(s))" -ForegroundColor Green
+Write-Host "Feed written to $SiteRoot ($($data.Count) package id(s); sub-feeds: $(($majors | ForEach-Object { "bc$_" }) -join ', '))" -ForegroundColor Green

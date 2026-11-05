@@ -27,7 +27,16 @@ Add to `.vscode/settings.json` of the app that depends on the connector, then ru
 
 `al.useOnlyCustomFeeds` matters: the extension searches Microsoft's built-in AppSource symbols feed first and stops at its first hit, and that feed resolves the connector to a stale package id. Listing Microsoft's MSSymbolsV2 feed keeps the Microsoft symbols working.
 
-The extension takes the first package whose id contains the app id, regardless of the project's BC version, so the feed always lists the newest major first. That is the build you get in VS Code.
+The extension takes the first package whose id contains the app id, regardless of the project's BC version, so the root feed always hands VS Code the newest major. A project on an older major uses the sub-feed for that major instead, which lists only that major's package:
+
+| Project platform | `al.nugetFeeds` entry |
+|---|---|
+| newest major | `https://packages.dimescheduler.com` |
+| BC29 | `https://packages.dimescheduler.com/bc29` |
+| BC28 | `https://packages.dimescheduler.com/bc28` |
+| BC27 | `https://packages.dimescheduler.com/bc27` |
+
+Sub-feeds exist for every major that has a package; the landing page lists them.
 
 ### BcContainerHelper and AL-Go
 
